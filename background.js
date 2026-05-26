@@ -7,7 +7,7 @@
 //    Later we'll move this to a proper config.json, but this is already 10x better
 //    than it being buried inside fetch() logic
 const CONFIG = {
-  apiEndpoint: "https://your-backend-url.com/api/v1/analyze-domain",
+apiEndpoint: "https://phishshield-ai-guardian-production.up.railway.app/predict",
   // 👆 Replace this with your live URL. When you deploy properly (Phase 3),
   //    this becomes your real domain e.g. https://api.phishshield.dev/...
 };
