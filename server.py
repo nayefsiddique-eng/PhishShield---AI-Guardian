@@ -1,15 +1,18 @@
-"""
-PhishShield AI - Live Core Engine (Cloudflare HTTPS Tunneling Deployment)
+﻿"""
+PhishShield AI - FastAPI Backend
+ML + Heuristic dual-layer phishing detection engine
 """
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from flask_cloudflared import _run_cloudflared
+import joblib
+import numpy as np
+import os
+import re
+import math
 import Levenshtein
-import uvicorn
-import threading
-import time
+from urllib.parse import urlparse
 
 app = FastAPI()
 
@@ -21,64 +24,140 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class DomainPayload(BaseModel):
-    domain: str
+# Load model artifacts
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+model = joblib.load(os.path.join(BASE_DIR, "phish_model.pkl"))
+scaler = joblib.load(os.path.join(BASE_DIR, "phish_scaler.pkl"))
+feature_names = joblib.load(os.path.join(BASE_DIR, "phish_features.pkl"))
 
-PROTECTED_BRANDS = ["google", "amazon", "netflix", "paypal", "microsoft", "linkedin", "apple", "facebook"]
+PROTECTED_BRANDS = [
+    "google", "amazon", "netflix", "paypal", "microsoft",
+    "linkedin", "apple", "facebook", "instagram", "twitter",
+    "bankofamerica", "chase", "wellsfargo", "dropbox", "github"
+]
 
-@app.post("/api/v1/analyze-domain")
-async def analyze_domain(payload: DomainPayload):
-    target_domain = payload.domain.strip().lower()
-    clean_name = target_domain.replace("www.", "")
-    pure_domain_string = clean_name.split('.')[0]
-    
-    backend_risk_score = 0
-    backend_flags = []
+SUSPICIOUS_TLDS = {
+    ".xyz", ".top", ".click", ".loan", ".work", ".gq",
+    ".ml", ".cf", ".ga", ".tk", ".pw", ".cc", ".su"
+}
 
-    print(f"[LIVE AUDIT] Analyzing: {target_domain} (Parsed as: {pure_domain_string})")
+class URLPayload(BaseModel):
+    url: str
+
+def get_entropy(s: str) -> float:
+    if not s:
+        return 0.0
+    freq = {}
+    for c in s:
+        freq[c] = freq.get(c, 0) + 1
+    return -sum((f / len(s)) * math.log2(f / len(s)) for f in freq.values())
+
+def extract_features(url: str) -> list:
+    try:
+        parsed = urlparse(url if url.startswith("http") else "http://" + url)
+        domain = parsed.netloc or parsed.path
+        path = parsed.path or ""
+        full = url
+    except Exception:
+        domain = url
+        path = ""
+        full = url
+
+    domain_clean = domain.replace("www.", "")
+    parts = domain_clean.split(".")
+    subdomain_depth = max(0, len(parts) - 2)
+    tld = "." + parts[-1] if len(parts) > 1 else ""
+
+    features = [
+        len(full),
+        len(domain),
+        subdomain_depth,
+        full.count("."),
+        full.count("-"),
+        full.count("@"),
+        full.count("//"),
+        full.count("https"),
+        int(bool(re.match(r"^\d{1,3}(\.\d{1,3}){3}$", domain_clean))),
+        get_entropy(domain_clean),
+        int(any(kw in full.lower() for kw in ["secure", "login", "verify", "update", "signin", "account", "banking"])),
+        int(tld in SUSPICIOUS_TLDS),
+        len(path),
+        path.count("/"),
+        int(bool(re.search(r"\d{4,}", domain_clean))),
+    ]
+    return features
+
+def heuristic_layer(url: str, domain: str) -> tuple[int, list[str]]:
+    bonus = 0
+    flags = []
+    domain_clean = domain.replace("www.", "").split(".")[0]
+    parsed_tld = "." + domain.split(".")[-1] if "." in domain else ""
 
     for brand in PROTECTED_BRANDS:
-        if pure_domain_string == brand:
-            return {"status": "SAFE", "backendRiskScore": 0, "backendFlags": []}
-            
-        distance = Levenshtein.distance(pure_domain_string, brand)
-        if 1 <= distance <= 2:
-            backend_risk_score += 55
-            backend_flags.append(f"Deceptive Typo-Squatting: Match closer to brand [{brand.upper()}]")
+        dist = Levenshtein.distance(domain_clean, brand)
+        if 1 <= dist <= 2:
+            bonus += 30
+            flags.append(f"Typosquatting detected — close match to {brand.upper()}")
             break
 
-    scam_keywords = ["verify", "secure", "update", "login", "signin"]
-    for keyword in scam_keywords:
-        if keyword in target_domain:
-            backend_risk_score += 20
-            backend_flags.append(f"Threat Phrase Detected: [{keyword}]")
+    if parsed_tld in SUSPICIOUS_TLDS:
+        bonus += 15
+        flags.append(f"Suspicious TLD: {parsed_tld}")
+
+    for kw in ["secure", "login", "verify", "update", "signin", "account", "banking"]:
+        if kw in url.lower():
+            bonus += 10
+            flags.append(f"Suspicious keyword: {kw}")
             break
+
+    if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", domain.replace("www.", "")):
+        bonus += 20
+        flags.append("IP address used as domain")
+
+    if domain.count("-") >= 3:
+        bonus += 10
+        flags.append("Excessive hyphens in domain")
+
+    return min(bonus, 40), flags
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+@app.get("/")
+def root():
+    return {"service": "PhishShield AI", "version": "1.0.0", "status": "running"}
+
+@app.post("/predict")
+async def predict(payload: URLPayload):
+    url = payload.url.strip()
+
+    try:
+        parsed = urlparse(url if url.startswith("http") else "http://" + url)
+        domain = parsed.netloc or parsed.path
+    except Exception:
+        domain = url
+
+    features = extract_features(url)
+    features_scaled = scaler.transform([features])
+    ml_prob = float(model.predict_proba(features_scaled)[0][1])
+    ml_score = round(ml_prob * 100)
+
+    heuristic_bonus, flags = heuristic_layer(url, domain)
+    final_score = min(ml_score + heuristic_bonus, 100)
+
+    if final_score >= 70:
+        status = "DANGER"
+    elif final_score >= 40:
+        status = "MEDIUM"
+    else:
+        status = "SAFE"
 
     return {
-        "status": "PROCESSED",
-        "backendRiskScore": backend_risk_score,
-        "backendFlags": backend_flags
+        "status": status,
+        "score": final_score,
+        "ml_score": ml_score,
+        "heuristic_bonus": heuristic_bonus,
+        "flags": flags,
+        "domain": domain
     }
-
-def start_cloudflare_tunnel():
-    """Spins up the Cloudflare binary loop on a parallel background thread"""
-    time.sleep(1.5) # Give Uvicorn a moment to start up first
-    print("\n[SYSTEM] Initializing Cloudflare Tunnel Cluster...")
-    
-    try:
-        # Fixed positional argument signature by explicitly passing both ports
-        metrics_url = _run_cloudflared(port=8000, metrics_port=8050)
-        
-        print("\n" + "="*60)
-        print(f"🚀 PHISHSHIELD AI LIVE SECURE GLOBAL LINK:")
-        print(f"👉 {metrics_url} 👈")
-        print("="*60 + "\n")
-    except Exception as e:
-        print(f"\n[ERROR] Tunnel allocation failed: {e}\n")
-
-if __name__ == "__main__":
-    # Fire up the tunnel wrapper process asynchronously
-    threading.Thread(target=start_cloudflare_tunnel, daemon=True).start()
-    
-    # Run our standard fast API listener core
-    uvicorn.run(app, host="127.0.0.1", port=8000)
