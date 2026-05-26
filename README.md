@@ -1,22 +1,26 @@
-| Endpoint | Method | Purpose |
-|---|---|---|
-| `/` | GET | Service info |
-| `/health` | GET | Health check |
-| `/predict` | POST | Score a URL |
-| `/docs` | GET | Interactive API UI |
-
 ---
 
-## API
+## API Reference
+
+**Base URL:** `https://phishshield-ai-guardian-production.up.railway.app`
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/` | GET | Service info and version |
+| `/health` | GET | Railway health check — returns `{"status": "ok"}` |
+| `/predict` | POST | Score a URL through all three detection layers |
+| `/docs` | GET | Interactive Swagger UI for testing |
 
 ### `POST /predict`
 
-Request:
+**Request body:**
 ```json
-{ "url": "http://paypa1-secure-login.xyz" }
+{
+  "url": "http://paypa1-secure-login.xyz"
+}
 ```
 
-Response:
+**Response:**
 ```json
 {
   "status": "DANGER",
@@ -32,70 +36,123 @@ Response:
 }
 ```
 
+**Status thresholds:**
+
+| Score Range | Status | Meaning |
+|---|---|---|
+| 70 – 100 | `DANGER` | High confidence phishing — banner injected |
+| 40 – 69 | `MEDIUM` | Suspicious — warning displayed |
+| 0 – 39 | `SAFE` | Likely legitimate |
+
 ---
 
 ## Setup
 
-### 1. Install Python dependencies
+### Prerequisites
+
+- Python 3.10+
+- Google Chrome
+- Git
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/nayefsiddique-eng/PhishShield---AI-Guardian.git
+cd PhishShield---AI-Guardian
+```
+
+### 2. Install Python dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Train the model (one time only)
+### 3. Train the model (one time only)
 
 ```bash
 python train_model.py
 ```
 
-Downloads ~10,000 URLs from PhishTank and Tranco, trains the Random Forest, saves model artifacts. Takes about 2 minutes.
+Downloads ~10,000 URLs from PhishTank and Tranco, engineers features, trains the Random Forest, and saves `phish_model.pkl`, `phish_scaler.pkl`, `phish_features.pkl`. Takes approximately 2 minutes.
 
-### 3. Deploy backend
+> **Note:** Pre-trained `.pkl` files are already committed to the repo — you only need to run this if you want to retrain from scratch.
 
-The backend is already live on Railway. To run locally:
+### 4. Run the backend locally (optional)
+
+The backend is permanently deployed on Railway and requires no local setup. To run locally:
 
 ```bash
 uvicorn server:app --reload
 ```
 
-### 4. Load the extension
+### 5. Load the Chrome extension
 
-1. Open Chrome → `chrome://extensions`
-2. Enable **Developer mode** (top right)
+1. Open Chrome and navigate to `chrome://extensions`
+2. Enable **Developer mode** (toggle, top right)
 3. Click **Load unpacked**
-4. Select the `phishshield-extension` folder
+4. Select the `PhishShield---AI-Guardian` folder
+5. The extension icon appears in your toolbar — it's active immediately
 
 ---
 
-## Tech stack
+## Tech Stack
 
-**Frontend:** Chrome Extension (Manifest V3), Vanilla JS, CSS  
-**Backend:** Python, FastAPI, Uvicorn  
-**ML:** scikit-learn (RandomForestClassifier), numpy  
-**Enrichment:** python-whois (domain age), python-Levenshtein (typosquatting)  
-**Deployment:** Railway  
-**Data:** PhishTank, Tranco Top-1M  
-
----
-
-## Design decisions
-
-**Why Random Forest over deep learning?** Inference is microseconds vs hundreds of milliseconds for a neural net. Latency matters for a browser extension backend. RF is also more explainable in an interview — you can point to specific features driving the score.
-
-**Why 15 engineered features over raw text?** Structural features generalise better to unseen phishing patterns than character-level models. The features capture attacker intent — obfuscation, brand impersonation — rather than surface patterns that change with every campaign.
-
-**Why a heuristic layer on top of ML?** The ML model outputs a probability. The heuristic layer provides human-readable explanations. Users need to know *why* a site was flagged, not just that it was. It also acts as a safety net for edge cases the model might miss.
-
-**Why WHOIS domain age?** The majority of phishing infrastructure uses domains registered days or hours before the attack. This is a well-documented attacker behaviour (short TTL campaigns). Adding registration age as a signal catches campaigns that look structurally clean by URL alone.
-
-**Why Manifest V3?** MV2 is deprecated by Chrome. Building on V3 from the start means the extension won't break as Chrome phases out MV2 support.
+| Layer | Technology |
+|---|---|
+| Chrome Extension | Manifest V3, Vanilla JS, CSS |
+| Backend Framework | Python, FastAPI, Uvicorn |
+| ML Model | scikit-learn `RandomForestClassifier` |
+| Feature Processing | numpy, StandardScaler |
+| Typosquatting Detection | python-Levenshtein |
+| Domain Intelligence | python-whois |
+| Deployment | Railway (always-on, auto-deploy from GitHub) |
+| Training Data | PhishTank (phishing), Tranco Top-1M (legitimate) |
 
 ---
 
-## Known limitations
+## Design Decisions
 
-- WHOIS lookups add 1–3 seconds of latency per request. Domains with private registration return no age data (fail silently, no penalty applied).
-- The ML model was trained on URL structure only. A page that looks legitimate by URL but has deceptive content would not be caught by the ML layer.
-- `content.js` cache TTL is 30 seconds — pages that dynamically inject content after the cache window could be missed on fast revisits.
+**Why Random Forest over deep learning?**
+Inference is microseconds vs hundreds of milliseconds for a neural net. For a browser extension where every millisecond of latency is felt by the user, this tradeoff is clear. Random Forest is also highly interpretable — each feature's contribution to the score can be explained directly, which matters both for user trust and for interview questions.
+
+**Why 15 engineered features instead of raw URL text?**
+Character-level models (n-grams, transformers) memorise surface patterns from training data. Structural feature engineering captures *why* a URL is suspicious — obfuscation depth, brand impersonation pattern, TLD abuse — which generalises to unseen phishing campaigns that use new domain names.
+
+**Why a separate heuristic layer on top of ML?**
+The ML model outputs a probability. The heuristic layer outputs a human-readable reason. Users don't trust scores they can't interpret. The flags panel tells the user *exactly* what was wrong — typosquatting against PayPal, suspicious TLD, keyword in URL — which is both more trustworthy and more educational.
+
+**Why WHOIS domain age?**
+Phishing infrastructure has a characteristic lifecycle: domains are registered, used for an attack campaign, and abandoned within days or weeks. A domain registered 3 days ago that scores 55 on ML+heuristics is almost certainly more dangerous than a domain registered 5 years ago that scores 55. Age is a strong contextual signal that URL structure alone cannot capture.
+
+**Why Manifest V3?**
+Chrome is actively deprecating MV2. Building on V3 from the start means the extension works today and won't break as MV2 is phased out. The `return true` in the message listener is a known V3 gotcha for async responses — already handled correctly.
+
+**Why commit `.pkl` files to GitHub?**
+The alternative is re-training the model on every Railway deployment, which adds ~5 minutes to startup time and introduces nondeterminism. At ~4.5MB total the files are well within GitHub limits, and committing them gives a reproducible, instant cold start.
 
 ---
+
+## Known Limitations
+
+- **WHOIS latency:** Domain age lookups add 1–3 seconds per request. Domains with privacy protection (WHOIS guard) return no creation date — the system fails silently and applies no age penalty rather than false-flagging.
+- **URL-only ML:** The model was trained on URL structure, not page content. A legitimate-looking URL serving a malicious page would not be caught by the ML layer. The heuristic DOM scanner partially compensates.
+- **Cache TTL:** The 30-second domain cache in `content.js` means a URL added to threat intelligence mid-session won't be re-evaluated until the cache expires.
+- **Rate limiting:** The free Railway tier has resource limits. Under heavy load the backend may respond slowly — this is a portfolio project, not production infrastructure.
+
+---
+
+## Roadmap
+
+- [ ] **Confidence explainability panel** — per-feature contribution breakdown showing which of the 15 features drove the ML score
+- [ ] **Visual similarity detection** — headless screenshot + cosine similarity against login page fingerprints for Google, PayPal, etc.
+- [ ] **Firefox port** — WebExtensions API is compatible; mostly a manifest and packaging change
+- [ ] **User whitelist** — false-positive reporting and domain override
+- [ ] **Threat feed sync** — daily PhishTank feed cached on Railway for zero-latency cross-reference
+
+---
+
+<div align="center">
+
+Built by [Nayef Siddique](https://github.com/nayefsiddique-eng) · Deployed on [Railway](https://railway.app)
+
+</div>
