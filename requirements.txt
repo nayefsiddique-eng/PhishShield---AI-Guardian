@@ -6,3 +6,4 @@ pandas==2.2.2
 python-levenshtein==0.25.1
 requests==2.31.0
 joblib==1.4.2
+python-whois==0.9.4

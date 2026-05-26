@@ -1,6 +1,6 @@
 ﻿"""
 PhishShield AI - FastAPI Backend
-ML + Heuristic dual-layer phishing detection engine
+ML + Heuristic + WHOIS triple-layer phishing detection engine
 """
 
 from fastapi import FastAPI
@@ -12,6 +12,8 @@ import os
 import re
 import math
 import Levenshtein
+import whois
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 app = FastAPI()
@@ -120,6 +122,41 @@ def heuristic_layer(url: str, domain: str) -> tuple[int, list[str]]:
 
     return min(bonus, 40), flags
 
+def domain_age_check(domain: str) -> tuple[int, str | None]:
+    """
+    Returns (score_bonus, flag_string).
+    Domains under 30 days old:  +25 bonus, flagged as high risk.
+    Domains 30-90 days old:     +10 bonus, flagged as moderate risk.
+    Domains over 90 days or lookup failure: 0 bonus, no flag.
+    """
+    try:
+        parts = domain.replace("www.", "").split(".")
+        registrable = ".".join(parts[-2:]) if len(parts) >= 2 else domain
+
+        w = whois.whois(registrable)
+        creation_date = w.creation_date
+
+        if isinstance(creation_date, list):
+            creation_date = creation_date[0]
+
+        if creation_date is None:
+            return 0, None
+
+        if creation_date.tzinfo is None:
+            creation_date = creation_date.replace(tzinfo=timezone.utc)
+
+        age_days = (datetime.now(timezone.utc) - creation_date).days
+
+        if age_days < 30:
+            return 25, f"Domain registered {age_days} days ago — extremely new (high risk)"
+        elif age_days < 90:
+            return 10, f"Domain registered {age_days} days ago — recently created (moderate risk)"
+        else:
+            return 0, None
+
+    except Exception:
+        return 0, None
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -138,13 +175,21 @@ async def predict(payload: URLPayload):
     except Exception:
         domain = url
 
+    # ML layer
     features = extract_features(url)
     features_scaled = scaler.transform([features])
     ml_prob = float(model.predict_proba(features_scaled)[0][1])
     ml_score = round(ml_prob * 100)
 
+    # Heuristic layer
     heuristic_bonus, flags = heuristic_layer(url, domain)
-    final_score = min(ml_score + heuristic_bonus, 100)
+
+    # WHOIS domain age layer
+    age_bonus, age_flag = domain_age_check(domain)
+    if age_flag:
+        flags.append(age_flag)
+
+    final_score = min(ml_score + heuristic_bonus + age_bonus, 100)
 
     if final_score >= 70:
         status = "DANGER"
@@ -158,6 +203,7 @@ async def predict(payload: URLPayload):
         "score": final_score,
         "ml_score": ml_score,
         "heuristic_bonus": heuristic_bonus,
+        "age_bonus": age_bonus,
         "flags": flags,
         "domain": domain
     }
