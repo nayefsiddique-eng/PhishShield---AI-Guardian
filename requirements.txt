@@ -1,16 +1,10 @@
-pdfplumber
-pytesseract
-requests
-python-docx
-streamlit
-pandas
-pillow
-networkx
-faiss-cpu
-sentence-transformers
-numpy
-beautifulsoup4
-python-dotenv
-duckduckgo-search
-ddgs
-pydantic
+@"
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+scikit-learn==1.4.2
+numpy==1.26.4
+pandas==2.2.2
+python-levenshtein==0.25.1
+requests==2.31.0
+joblib==1.4.2
+"@ | Out-File -FilePath "C:\Users\Admin pc\Desktop\phishshield-extension\requirements.txt" -Encoding utf8 -NoNewline
