@@ -1,0 +1,16 @@
+@"
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+venv/
+.venv/
+*.pkl
+*.csv
+phishtank_data.json
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
+"@ | Out-File -FilePath "C:\Users\Admin pc\Desktop\phishshield-extension\.gitignore" -Encoding utf8

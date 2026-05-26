@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PhishShield AI</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+
+  <div class="header">
+    <div class="logo">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f97316" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+      </svg>
+      <span>PHISHSHIELD</span>
+    </div>
+    <div class="live-badge">
+      <span class="live-dot"></span>
+      <span>LIVE</span>
+    </div>
+  </div>
+
+  <div class="domain-card">
+    <div class="card-label">Scanning</div>
+    <div id="target-domain" class="domain-value">Initializing...</div>
+  </div>
+
+  <div class="threat-card" id="threat-card">
+
+    <div class="threat-top">
+      <div class="score-block">
+        <div class="card-label">Threat score</div>
+        <div class="score-number">
+          <span id="threat-score">0</span><span class="score-pct">%</span>
+        </div>
+      </div>
+      <svg class="ring-svg" width="72" height="72" viewBox="0 0 72 72">
+        <circle class="ring-track" cx="36" cy="36" r="28"/>
+        <circle class="ring-fill" id="ring-fill" cx="36" cy="36" r="28"
+          stroke-dasharray="175.9"
+          stroke-dashoffset="175.9"
+          transform="rotate(-90 36 36)"/>
+        <text id="ring-label" x="36" y="41" text-anchor="middle" class="ring-text">—</text>
+      </svg>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="card-label" style="margin-bottom:8px;">Threat flags</div>
+    <div id="flags-list">
+      <div class="no-flags">No threats detected.</div>
+    </div>
+
+  </div>
+
+  <div class="footer">
+    <span>v1.0.0 · ML + heuristic engine</span>
+    <span id="severity-badge" class="severity-badge severity-safe">SAFE</span>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+pdfplumber
+pytesseract
+requests
+python-docx
+streamlit
+pandas
+pillow
+networkx
+faiss-cpu
+sentence-transformers
+numpy
+beautifulsoup4
+python-dotenv
+duckduckgo-search
+ddgs
+pydantic
