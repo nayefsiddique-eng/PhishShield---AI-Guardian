@@ -1,10 +1,8 @@
-@"
-[build]
+﻿[build]
 builder = "nixpacks"
 
 [deploy]
-startCommand = "uvicorn server:app --host 0.0.0.0 --port `$PORT"
+startCommand = "uvicorn server:app --host 0.0.0.0 --port $PORT"
 healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "on_failure"
-"@ | Out-File -FilePath "C:\Users\Admin pc\Desktop\phishshield-extension\railway.toml" -Encoding utf8
