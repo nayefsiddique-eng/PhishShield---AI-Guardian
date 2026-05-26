@@ -1,104 +1,35 @@
-# PhishShield AI
-
-> Real-time phishing detection Chrome extension powered by a Random Forest classifier trained on 10,000 live threat URLs.
-
-![Version](https://img.shields.io/badge/version-2.0.0-blue) ![Accuracy](https://img.shields.io/badge/accuracy-99%25-brightgreen) ![F1](https://img.shields.io/badge/F1%20score-0.987-brightgreen) ![Manifest](https://img.shields.io/badge/Manifest-V3-orange)
-
----
-
-## What it does
-
-PhishShield AI runs silently in your browser and evaluates every page you visit in real time. It combines a machine learning model with a heuristic layer to detect phishing attempts before you interact with them.
-
-When a threat is detected, it displays a full-width warning banner with the threat score and specific flags explaining why the page was flagged.
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/` | GET | Service info |
+| `/health` | GET | Health check |
+| `/predict` | POST | Score a URL |
+| `/docs` | GET | Interactive API UI |
 
 ---
 
-## How it works
+## API
 
-```
-Browser page load
-      │
-      ▼
-content.js (MutationObserver, debounced)
-  └─ Extracts: domain, password fields, payment fields, form count
-      │
-      ▼
-background.js (Service Worker)
-  ├─ Local heuristic: HTTP + password field → +35 risk
-  └─ POST /api/v1/analyze-domain
-          │
-          ▼
-    FastAPI backend (server.py)
-      ├─ ML layer: Random Forest (15 URL features) → probability score
-      └─ Heuristic layer: typosquatting, TLD risk, keyword detection
-          │
-          ▼
-    Combined risk score (0–100)
-      │
-      ├─ Score ≥ 40 → Warning banner injected into page
-      └─ Score stored → Popup displays ring + flags
+### `POST /predict`
+
+Request:
+```json
+{ "url": "http://paypa1-secure-login.xyz" }
 ```
 
----
-
-## ML model
-
-| Metric | Score |
-|---|---|
-| Accuracy | 99% |
-| Precision (phishing) | 0.99 |
-| Recall (phishing) | 0.99 |
-| F1 score | 0.99 |
-| 5-fold CV F1 | 0.987 ± 0.010 |
-| Training samples | 10,000 (5,000 phishing + 5,000 legit) |
-| Test samples | 2,000 |
-| False positives | 5 / 1,000 |
-| False negatives | 11 / 1,000 |
-
-### Training data sources
-- Phishing: [PhishTank](https://phishtank.org/) verified live feed
-- Legitimate: [Tranco](https://tranco-list.eu/) top-1M domains
-
-### Feature engineering (15 features)
-
-| Feature | Why it matters |
-|---|---|
-| `url_length` | Phishing URLs are longer on average |
-| `path_length` | Long paths used to obfuscate destination |
-| `domain_length` | Suspicious domains tend to be longer |
-| `subdomain_depth` | Chained subdomains are a common evasion tactic |
-| `dot_count` | More dots = more subdomain nesting |
-| `hyphen_count` | Hyphens used to mimic brands (pay-pal.com) |
-| `at_symbol` | `@` in URL redirects to different host |
-| `double_slash` | Path-based redirect obfuscation |
-| `digit_count` | Digit-heavy domains are rarely legitimate |
-| `special_char_count` | Encoded/special chars signal obfuscation |
-| `url_entropy` | High Shannon entropy = randomised/generated URL |
-| `suspicious_tld` | .tk, .ml, .xyz and similar high-abuse TLDs |
-| `keyword_in_url` | login, verify, secure, update etc. |
-| `brand_in_subdomain` | paypal.evil.com pattern |
-| `is_ip_address` | Raw IP instead of domain = strong signal |
-
----
-
-## Architecture
-
-```
-phishshield-extension/
-├── manifest.json          # Chrome Manifest V3
-├── content.js             # DOM scanner (debounced MutationObserver + cache)
-├── background.js          # Service worker — routes to backend, local fallback
-├── popup/
-│   ├── popup.html         # Extension popup UI
-│   ├── popup.css          # Styles (threat ring, severity states)
-│   └── popup.js           # Drives ring animation + color tiers
-├── test_env.html          # Local test page with password field
-├── server.py              # FastAPI backend — ML + heuristic engine
-├── train_model.py         # One-time model training script
-├── phish_model.pkl        # Trained Random Forest (generated)
-├── phish_scaler.pkl       # StandardScaler (generated)
-└── phish_features.pkl     # Feature column order (generated)
+Response:
+```json
+{
+  "status": "DANGER",
+  "score": 100,
+  "ml_score": 97,
+  "heuristic_bonus": 25,
+  "age_bonus": 0,
+  "flags": [
+    "Suspicious TLD: .xyz",
+    "Suspicious keyword: secure"
+  ],
+  "domain": "paypa1-secure-login.xyz"
+}
 ```
 
 ---
@@ -108,7 +39,7 @@ phishshield-extension/
 ### 1. Install Python dependencies
 
 ```bash
-pip install fastapi uvicorn scikit-learn pandas numpy requests joblib python-levenshtein flask-cloudflared
+pip install -r requirements.txt
 ```
 
 ### 2. Train the model (one time only)
@@ -117,27 +48,17 @@ pip install fastapi uvicorn scikit-learn pandas numpy requests joblib python-lev
 python train_model.py
 ```
 
-Downloads ~10,000 URLs from PhishTank and Tranco, trains the Random Forest, and saves the model artifacts. Takes about 2 minutes. Outputs accuracy report to `phish_report.txt`.
+Downloads ~10,000 URLs from PhishTank and Tranco, trains the Random Forest, saves model artifacts. Takes about 2 minutes.
 
-### 3. Start the backend
+### 3. Deploy backend
+
+The backend is already live on Railway. To run locally:
 
 ```bash
-python server.py
+uvicorn server:app --reload
 ```
 
-Prints a live Cloudflare tunnel URL. Copy it.
-
-### 4. Set the API endpoint
-
-In `background.js`, update:
-
-```js
-const CONFIG = {
-  apiEndpoint: "https://your-tunnel-url.trycloudflare.com/api/v1/analyze-domain"
-};
-```
-
-### 5. Load the extension
+### 4. Load the extension
 
 1. Open Chrome → `chrome://extensions`
 2. Enable **Developer mode** (top right)
@@ -146,72 +67,35 @@ const CONFIG = {
 
 ---
 
-## API
-
-### `POST /api/v1/analyze-domain`
-
-Request:
-```json
-{ "domain": "paypa1-secure-login.net" }
-```
-
-Response:
-```json
-{
-  "status": "PROCESSED",
-  "backendRiskScore": 87,
-  "backendFlags": [
-    "ML model flagged this URL (High confidence, 82.0% phishing probability)",
-    "Typosquatting detected — closely matches 'PAYPAL'",
-    "Suspicious keyword in domain: 'login'"
-  ],
-  "engineUsed": "ml+heuristic",
-  "mlAvailable": true
-}
-```
-
-### `GET /health`
-
-```json
-{ "status": "ok", "mlAvailable": true, "version": "2.0.0" }
-```
-
----
-
 ## Tech stack
 
 **Frontend:** Chrome Extension (Manifest V3), Vanilla JS, CSS  
 **Backend:** Python, FastAPI, Uvicorn  
-**ML:** scikit-learn (RandomForestClassifier), pandas, numpy  
-**Deployment:** Cloudflare Tunnel  
+**ML:** scikit-learn (RandomForestClassifier), numpy  
+**Enrichment:** python-whois (domain age), python-Levenshtein (typosquatting)  
+**Deployment:** Railway  
 **Data:** PhishTank, Tranco Top-1M  
 
 ---
 
 ## Design decisions
 
-**Why Random Forest?** Interpretable, fast at inference, handles mixed feature types well, and doesn't require a GPU. For a browser extension backend where latency matters, it's the right tradeoff over deep learning.
+**Why Random Forest over deep learning?** Inference is microseconds vs hundreds of milliseconds for a neural net. Latency matters for a browser extension backend. RF is also more explainable in an interview — you can point to specific features driving the score.
 
-**Why 15 features instead of raw text?** Feature engineering on URL structure generalises better than character-level models on unseen phishing patterns. The features capture structural intent (obfuscation, brand impersonation) rather than surface patterns.
+**Why 15 engineered features over raw text?** Structural features generalise better to unseen phishing patterns than character-level models. The features capture attacker intent — obfuscation, brand impersonation — rather than surface patterns that change with every campaign.
 
-**Why a heuristic layer on top of ML?** The ML model handles probabilistic scoring. The heuristic layer catches high-confidence explicit signals (typosquatting, IP addresses) with human-readable explanations — which is what users actually need to understand why a site was flagged.
+**Why a heuristic layer on top of ML?** The ML model outputs a probability. The heuristic layer provides human-readable explanations. Users need to know *why* a site was flagged, not just that it was. It also acts as a safety net for edge cases the model might miss.
 
-**Why Manifest V3?** MV2 is deprecated. Building on V3 from the start means the extension won't break as Chrome phases out MV2 support.
+**Why WHOIS domain age?** The majority of phishing infrastructure uses domains registered days or hours before the attack. This is a well-documented attacker behaviour (short TTL campaigns). Adding registration age as a signal catches campaigns that look structurally clean by URL alone.
+
+**Why Manifest V3?** MV2 is deprecated by Chrome. Building on V3 from the start means the extension won't break as Chrome phases out MV2 support.
 
 ---
 
 ## Known limitations
 
-- The Cloudflare tunnel URL changes on every server restart — you need to update `CONFIG.apiEndpoint` in `background.js` each time. A permanent deployment would fix this.
-- The ML model was trained on URL structure only. A page that looks legitimate by URL but has deceptive content would not be caught by the ML layer (the heuristic DOM scanner partially compensates for this).
-- `content.js` cache TTL is 30 seconds — pages that dynamically inject password fields after the cache window could be missed on fast revisits.
+- WHOIS lookups add 1–3 seconds of latency per request. Domains with private registration return no age data (fail silently, no penalty applied).
+- The ML model was trained on URL structure only. A page that looks legitimate by URL but has deceptive content would not be caught by the ML layer.
+- `content.js` cache TTL is 30 seconds — pages that dynamically inject content after the cache window could be missed on fast revisits.
 
 ---
-
-## Roadmap
-
-- [ ] Permanent backend deployment (Railway / Render)
-- [ ] VirusTotal API integration for multi-engine URL reputation
-- [ ] Screenshot-based visual similarity detection (CNN)
-- [ ] Firefox port (WebExtensions API compatible)
-- [ ] User whitelist / false-positive reporting
