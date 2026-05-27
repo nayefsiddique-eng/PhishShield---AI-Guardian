@@ -1,4 +1,4 @@
-﻿"""
+"""
 PhishShield AI - FastAPI Backend
 ML + Heuristic + WHOIS triple-layer phishing detection engine
 """
@@ -82,23 +82,29 @@ def extract_features(url: str) -> list:
     parts = domain_clean.split(".")
     subdomain_depth = max(0, len(parts) - 2)
     tld = "." + parts[-1] if len(parts) > 1 else ""
+    subdomain = ".".join(parts[:-2]) if len(parts) > 2 else ""
 
+    # Feature order MUST match phish_features.pkl exactly:
+    # ['url_length', 'domain_length', 'path_length', 'subdomain_depth',
+    #  'dot_count', 'hyphen_count', 'at_symbol', 'double_slash',
+    #  'digit_count', 'special_char_count', 'url_entropy',
+    #  'suspicious_tld', 'keyword_in_url', 'brand_in_subdomain', 'is_ip_address']
     features = [
-        len(full),
-        len(domain),
-        subdomain_depth,
-        full.count("."),
-        full.count("-"),
-        full.count("@"),
-        full.count("//"),
-        full.count("https"),
-        int(bool(re.match(r"^\d{1,3}(\.\d{1,3}){3}$", domain_clean))),
-        get_entropy(domain_clean),
-        int(any(kw in full.lower() for kw in ["secure", "login", "verify", "update", "signin", "account", "banking"])),
-        int(tld in SUSPICIOUS_TLDS),
-        len(path),
-        path.count("/"),
-        int(bool(re.search(r"\d{4,}", domain_clean))),
+        len(full),                                                                          # 0: url_length
+        len(domain),                                                                        # 1: domain_length
+        len(path),                                                                          # 2: path_length
+        subdomain_depth,                                                                    # 3: subdomain_depth
+        full.count("."),                                                                    # 4: dot_count
+        full.count("-"),                                                                    # 5: hyphen_count
+        full.count("@"),                                                                    # 6: at_symbol
+        full.count("//"),                                                                   # 7: double_slash
+        sum(c.isdigit() for c in full),                                                    # 8: digit_count
+        sum(not c.isalnum() and c not in ".-/:?=&_#%" for c in full),                    # 9: special_char_count
+        get_entropy(domain_clean),                                                          # 10: url_entropy
+        int(tld in SUSPICIOUS_TLDS),                                                        # 11: suspicious_tld
+        int(any(kw in full.lower() for kw in ["secure", "login", "verify", "update", "signin", "account", "banking"])),  # 12: keyword_in_url
+        int(any(brand in subdomain.lower() for brand in PROTECTED_BRANDS)),                # 13: brand_in_subdomain
+        int(bool(re.match(r"^\d{1,3}(\.\d{1,3}){3}$", domain_clean))),                   # 14: is_ip_address
     ]
     return features
 
