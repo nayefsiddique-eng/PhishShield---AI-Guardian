@@ -3,6 +3,41 @@
  * Drives ring animation, color states, and flag rendering
  */
 document.addEventListener("DOMContentLoaded", () => {
+  function createFlagIcon() {
+    const svgNS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNS, "svg");
+    svg.setAttribute("class", "flag-icon");
+    svg.setAttribute("width", "14");
+    svg.setAttribute("height", "14");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "2.5");
+    svg.setAttribute("stroke-linecap", "round");
+
+    const circle = document.createElementNS(svgNS, "circle");
+    circle.setAttribute("cx", "12");
+    circle.setAttribute("cy", "12");
+    circle.setAttribute("r", "10");
+
+    const line1 = document.createElementNS(svgNS, "line");
+    line1.setAttribute("x1", "12");
+    line1.setAttribute("y1", "8");
+    line1.setAttribute("x2", "12");
+    line1.setAttribute("y2", "12");
+
+    const line2 = document.createElementNS(svgNS, "line");
+    line2.setAttribute("x1", "12");
+    line2.setAttribute("y1", "16");
+    line2.setAttribute("x2", "12.01");
+    line2.setAttribute("y2", "16");
+
+    svg.appendChild(circle);
+    svg.appendChild(line1);
+    svg.appendChild(line2);
+    return svg;
+  }
+
   chrome.storage.local.get(["lastCheckedDomain", "lastThreatScore", "lastThreatFlags"], (data) => {
 
     const domainEl    = document.getElementById("target-domain");
@@ -60,19 +95,15 @@ document.addEventListener("DOMContentLoaded", () => {
     const flags = (data.lastThreatFlags || []).filter(f => f !== "System Ready");
 
     if (flags.length > 0) {
-      flagsList.innerHTML = "";
+      flagsList.replaceChildren();
       flags.forEach((text) => {
         const item = document.createElement("div");
         item.className = "flag-item";
-        item.innerHTML = `
-          <svg class="flag-icon" width="14" height="14" viewBox="0 0 24 24"
-            fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-            <circle cx="12" cy="12" r="10"/>
-            <line x1="12" y1="8" x2="12" y2="12"/>
-            <line x1="12" y1="16" x2="12.01" y2="16"/>
-          </svg>
-          <span class="flag-text">${text}</span>
-        `;
+        item.appendChild(createFlagIcon());
+        const label = document.createElement("span");
+        label.className = "flag-text";
+        label.textContent = text;
+        item.appendChild(label);
         flagsList.appendChild(item);
       });
     }

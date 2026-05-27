@@ -28,6 +28,7 @@
 
     const telemetryData = {
       domainName: sanitizedDomain,
+      pageUrl: window.location.href,
       hasPasswordInput: hasPassword,
       paymentFieldsCount: document.querySelectorAll('input[name*="card"], input[id*="cvv"]').length,
       totalForms: document.forms.length
@@ -86,7 +87,14 @@ function deployInterceptionBanner(score, mitigations) {
     border-bottom: 4px solid #DC2626 !important; font-size: 14px !important;
   `;
 
-  banner.innerHTML = `⚠️ PHISHSHIELD ALARM: Threat Score ${score}%. Flags: [${mitigations.join(', ')}]`;
-  document.body.prepend(banner);
-  document.body.style.paddingTop = "60px";
+  const safeFlags = Array.isArray(mitigations) ? mitigations.join(", ") : "";
+  banner.textContent = `⚠️ PHISHSHIELD ALARM: Threat Score ${score}%. Flags: [${safeFlags}]`;
+
+  const root = document.body || document.documentElement;
+  if (!root) return;
+
+  root.prepend(banner);
+  if (document.body) {
+    document.body.style.paddingTop = "60px";
+  }
 }

@@ -7,7 +7,7 @@
 //    Later we'll move this to a proper config.json, but this is already 10x better
 //    than it being buried inside fetch() logic
 const CONFIG = {
-apiEndpoint: "https://phishshield-ai-guardian-production.up.railway.app/predict",
+  apiEndpoint: "https://phishshield-ai-guardian-production.up.railway.app/predict",
   // 👆 Replace this with your live URL. When you deploy properly (Phase 3),
   //    this becomes your real domain e.g. https://api.phishshield.dev/...
 };
@@ -29,6 +29,8 @@ const pendingRequests = new Set();
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "EVALUATE_SECURITY_TELEMETRY") {
     const data = message.telemetryData;
+    const tabUrl = sender.tab?.url || data.pageUrl || "";
+    const requestUrl = tabUrl || data.domainName;
 
     // ✅ FIX 7: Skip if we're already processing this domain
     if (pendingRequests.has(data.domainName)) {
@@ -54,16 +56,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     fetch(CONFIG.apiEndpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ domain: data.domainName })
+      body: JSON.stringify({ url: requestUrl })
     })
       .then((res) => {
         if (!res.ok) throw new Error(`Backend returned ${res.status}`);
         return res.json();
       })
       .then((backendResult) => {
-        computedRiskScore += backendResult.backendRiskScore || 0;
-        if (backendResult.backendFlags) {
-          activatedAlertFlags = [...activatedAlertFlags, ...backendResult.backendFlags];
+        const backendScore =
+          typeof backendResult.score === "number"
+            ? backendResult.score
+            : (backendResult.backendRiskScore || 0);
+        const backendFlags = Array.isArray(backendResult.flags)
+          ? backendResult.flags
+          : (backendResult.backendFlags || []);
+
+        computedRiskScore += backendScore;
+        if (backendFlags.length > 0) {
+          activatedAlertFlags = [...activatedAlertFlags, ...backendFlags];
         }
 
         if (computedRiskScore > 100) computedRiskScore = 100;

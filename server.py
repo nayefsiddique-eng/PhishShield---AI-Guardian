@@ -3,7 +3,7 @@ PhishShield AI - FastAPI Backend
 ML + Heuristic + WHOIS triple-layer phishing detection engine
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import joblib
@@ -18,12 +18,23 @@ from urllib.parse import urlparse
 
 app = FastAPI()
 
+DEFAULT_ALLOWED_ORIGINS = [
+    "http://localhost",
+    "http://127.0.0.1",
+]
+allowed_origins = os.getenv("PHISHSHIELD_ALLOWED_ORIGINS")
+if allowed_origins:
+    cors_origins = [origin.strip() for origin in allowed_origins.split(",") if origin.strip()]
+else:
+    cors_origins = DEFAULT_ALLOWED_ORIGINS
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=cors_origins,
+    allow_origin_regex=r"^chrome-extension://[a-z]{32}$",
+    allow_credentials=False,
+    allow_methods=["POST", "GET", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # Load model artifacts
@@ -45,6 +56,8 @@ SUSPICIOUS_TLDS = {
 
 class URLPayload(BaseModel):
     url: str
+
+URL_MAX_LENGTH = 2048
 
 def get_entropy(s: str) -> float:
     if not s:
@@ -168,21 +181,35 @@ def root():
 @app.post("/predict")
 async def predict(payload: URLPayload):
     url = payload.url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="URL is required")
+    if len(url) > URL_MAX_LENGTH:
+        raise HTTPException(status_code=400, detail="URL too long")
 
+    lower_url = url.lower()
+    if lower_url.startswith(("javascript:", "data:", "file:")):
+        raise HTTPException(status_code=400, detail="Unsupported URL scheme")
+
+    normalized_url = url if lower_url.startswith(("http://", "https://")) else "http://" + url
     try:
-        parsed = urlparse(url if url.startswith("http") else "http://" + url)
+        parsed = urlparse(normalized_url)
         domain = parsed.netloc or parsed.path
-    except Exception:
-        domain = url
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Malformed URL") from exc
+
+    if parsed.scheme and parsed.scheme not in {"http", "https"}:
+        raise HTTPException(status_code=400, detail="Only HTTP(S) URLs are supported")
+    if not domain:
+        raise HTTPException(status_code=400, detail="Invalid domain")
 
     # ML layer
-    features = extract_features(url)
+    features = extract_features(normalized_url)
     features_scaled = scaler.transform([features])
     ml_prob = float(model.predict_proba(features_scaled)[0][1])
     ml_score = round(ml_prob * 100)
 
     # Heuristic layer
-    heuristic_bonus, flags = heuristic_layer(url, domain)
+    heuristic_bonus, flags = heuristic_layer(normalized_url, domain)
 
     # WHOIS domain age layer
     age_bonus, age_flag = domain_age_check(domain)
