@@ -51,7 +51,8 @@ PROTECTED_BRANDS = [
 
 SUSPICIOUS_TLDS = {
     ".xyz", ".top", ".click", ".loan", ".work", ".gq",
-    ".ml", ".cf", ".ga", ".tk", ".pw", ".cc", ".su"
+    ".ml", ".cf", ".ga", ".tk", ".pw", ".cc", ".su",
+    ".win", ".bid", ".download", ".racing", ".accountant"
 }
 
 class URLPayload(BaseModel):
@@ -67,22 +68,26 @@ def get_entropy(s: str) -> float:
         freq[c] = freq.get(c, 0) + 1
     return -sum((f / len(s)) * math.log2(f / len(s)) for f in freq.values())
 
-def extract_features(url: str) -> list:
-    try:
-        parsed = urlparse(url if url.startswith("http") else "http://" + url)
-        domain = parsed.netloc or parsed.path
-        path = parsed.path or ""
-        full = url
-    except Exception:
-        domain = url
-        path = ""
-        full = url
+SUSPICIOUS_KEYWORDS = [
+    "secure", "login", "verify", "update", "account", "banking",
+    "confirm", "password", "signin", "webscr", "paypal", "ebay",
+    "amazon", "microsoft", "apple"
+]
 
-    domain_clean = domain.replace("www.", "")
-    parts = domain_clean.split(".")
-    subdomain_depth = max(0, len(parts) - 2)
+BRAND_NAMES = [
+    "google", "amazon", "netflix", "paypal", "microsoft",
+    "linkedin", "apple", "facebook", "instagram", "twitter"
+]
+
+def extract_features(url: str) -> list:
+    # Normalise exactly as train_model.py does: lowercase, strip scheme for domain parse
+    url_lower = str(url).strip().lower()
+    domain = re.sub(r"https?://", "", url_lower).split("/")[0].split("?")[0].split("#")[0]
+    parts = domain.split(".")
     tld = "." + parts[-1] if len(parts) > 1 else ""
-    subdomain = ".".join(parts[:-2]) if len(parts) > 2 else ""
+    sld = parts[-2] if len(parts) > 1 else domain
+    path = url_lower[len(domain):]
+    subdomain_depth = max(0, len(parts) - 2)
 
     # Feature order MUST match phish_features.pkl exactly:
     # ['url_length', 'domain_length', 'path_length', 'subdomain_depth',
@@ -90,27 +95,28 @@ def extract_features(url: str) -> list:
     #  'digit_count', 'special_char_count', 'url_entropy',
     #  'suspicious_tld', 'keyword_in_url', 'brand_in_subdomain', 'is_ip_address']
     features = [
-        len(full),                                                                          # 0: url_length
-        len(domain),                                                                        # 1: domain_length
-        len(path),                                                                          # 2: path_length
-        subdomain_depth,                                                                    # 3: subdomain_depth
-        full.count("."),                                                                    # 4: dot_count
-        full.count("-"),                                                                    # 5: hyphen_count
-        full.count("@"),                                                                    # 6: at_symbol
-        full.count("//"),                                                                   # 7: double_slash
-        sum(c.isdigit() for c in full),                                                    # 8: digit_count
-        sum(not c.isalnum() and c not in ".-/:?=&_#%" for c in full),                    # 9: special_char_count
-        get_entropy(domain_clean),                                                          # 10: url_entropy
-        int(tld in SUSPICIOUS_TLDS),                                                        # 11: suspicious_tld
-        int(any(kw in full.lower() for kw in ["secure", "login", "verify", "update", "signin", "account", "banking"])),  # 12: keyword_in_url
-        int(any(brand in subdomain.lower() for brand in PROTECTED_BRANDS)),                # 13: brand_in_subdomain
-        int(bool(re.match(r"^\d{1,3}(\.\d{1,3}){3}$", domain_clean))),                   # 14: is_ip_address
+        len(url_lower),                                                                         # 0: url_length
+        len(domain),                                                                            # 1: domain_length
+        len(path),                                                                              # 2: path_length
+        subdomain_depth,                                                                        # 3: subdomain_depth
+        url_lower.count("."),                                                                   # 4: dot_count
+        domain.count("-"),                                                                      # 5: hyphen_count — domain only, matches training
+        int("@" in url_lower),                                                                  # 6: at_symbol
+        int("//" in url_lower[7:]),                                                             # 7: double_slash — skip scheme //, matches training
+        sum(c.isdigit() for c in domain),                                                       # 8: digit_count — domain only, matches training
+        len(re.findall(r"[%&=\?\+\#\!\*]", url_lower)),                                        # 9: special_char_count — matches training regex
+        round(get_entropy(url_lower), 4),                                                       # 10: url_entropy — full URL, matches training
+        int(tld in SUSPICIOUS_TLDS),                                                            # 11: suspicious_tld
+        int(any(k in url_lower for k in SUSPICIOUS_KEYWORDS)),                                  # 12: keyword_in_url — full keyword list, matches training
+        int(any(b in domain and b not in sld for b in BRAND_NAMES)),                            # 13: brand_in_subdomain — matches training logic
+        int(bool(re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}(:\d+)?", domain))),                     # 14: is_ip_address — matches training fullmatch
     ]
     return features
 
 def heuristic_layer(url: str, domain: str) -> tuple[int, list[str]]:
     bonus = 0
     flags = []
+    domain = domain.lower()
     domain_clean = domain.replace("www.", "").split(".")[0]
     parsed_tld = "." + domain.split(".")[-1] if "." in domain else ""
 
@@ -125,7 +131,7 @@ def heuristic_layer(url: str, domain: str) -> tuple[int, list[str]]:
         bonus += 15
         flags.append(f"Suspicious TLD: {parsed_tld}")
 
-    for kw in ["secure", "login", "verify", "update", "signin", "account", "banking"]:
+    for kw in SUSPICIOUS_KEYWORDS:
         if kw in url.lower():
             bonus += 10
             flags.append(f"Suspicious keyword: {kw}")
