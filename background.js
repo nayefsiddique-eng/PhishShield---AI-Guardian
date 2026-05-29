@@ -45,8 +45,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Local heuristic: password field over HTTP is always flagged immediately
     if (
       data.hasPasswordInput &&
-      sender.tab &&
-      sender.tab.url.startsWith("http://") &&
+      sender.tab?.url?.startsWith("http://") &&
       !data.domainName.includes("127.0.0.1")
     ) {
       computedRiskScore += 35;
