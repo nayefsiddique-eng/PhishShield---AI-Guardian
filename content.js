@@ -78,17 +78,26 @@
     );
   }
 
-  // Run an immediate initial scan on page load
-  scanAndReportDOM();
+  // Guard: if DOM isn't ready yet, wait for it before scanning and observing
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => {
+      scanAndReportDOM();
+      startObserver();
+    });
+  } else {
+    scanAndReportDOM();
+    startObserver();
+  }
 
-  let debounceTimer = null;
-  const observer = new MutationObserver(() => {
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(scanAndReportDOM, 1500);
-  });
-
-  observer.observe(document.body || document.documentElement, {
-    childList: true,
-    subtree: true
-  });
+  function startObserver() {
+    let debounceTimer = null;
+    const observer = new MutationObserver(() => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(scanAndReportDOM, 1500);
+    });
+    observer.observe(document.body || document.documentElement, {
+      childList: true,
+      subtree: true
+    });
+  }
 })();
