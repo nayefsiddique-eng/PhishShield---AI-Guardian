@@ -30,7 +30,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "EVALUATE_SECURITY_TELEMETRY") {
     const data = message.telemetryData;
     const tabUrl = sender.tab?.url || data.pageUrl || "";
-    const requestUrl = tabUrl || data.domainName;
+    const requestUrl = tabUrl || ("http://" + data.domainName);
 
     // ✅ FIX 7: Skip if we're already processing this domain
     if (pendingRequests.has(data.domainName)) {
@@ -71,12 +71,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           ? backendResult.flags
           : (backendResult.backendFlags || []);
 
-        computedRiskScore += backendScore;
+        // Backend score is the authoritative ML+heuristic+WHOIS result.
+        // Local HTTP penalty flags are additive on top, capped at 100.
+        computedRiskScore = Math.min(backendScore + computedRiskScore, 100);
         if (backendFlags.length > 0) {
           activatedAlertFlags = [...activatedAlertFlags, ...backendFlags];
         }
-
-        if (computedRiskScore > 100) computedRiskScore = 100;
 
         chrome.storage.local.set({
           lastCheckedDomain: data.domainName,
