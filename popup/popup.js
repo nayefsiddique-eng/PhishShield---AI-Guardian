@@ -38,30 +38,31 @@ document.addEventListener("DOMContentLoaded", () => {
     return svg;
   }
 
-  chrome.storage.local.get(["lastCheckedDomain", "lastThreatScore", "lastThreatFlags"], (data) => {
-
-    const domainEl    = document.getElementById("target-domain");
-    const scoreEl     = document.getElementById("threat-score");
-    const ringFill    = document.getElementById("ring-fill");
-    const ringLabel   = document.getElementById("ring-label");
-    const flagsList   = document.getElementById("flags-list");
-    const threatCard  = document.getElementById("threat-card");
+  function renderPopup(data, activeHostname) {
+    const domainEl     = document.getElementById("target-domain");
+    const scoreEl      = document.getElementById("threat-score");
+    const ringFill     = document.getElementById("ring-fill");
+    const ringLabel    = document.getElementById("ring-label");
+    const flagsList    = document.getElementById("flags-list");
+    const threatCard   = document.getElementById("threat-card");
     const severityBadge = document.getElementById("severity-badge");
 
-    // ── No scan yet ──────────────────────────────────
     if (!data.lastCheckedDomain || data.lastCheckedDomain === "Initialization Node") {
       domainEl.textContent = "No active scan";
       return;
     }
 
-    // ── Domain ───────────────────────────────────────
+    // Warn if stored result is from a different domain than the active tab
+    if (activeHostname && data.lastCheckedDomain !== activeHostname) {
+      domainEl.textContent = "Scanning " + activeHostname + "...";
+      return;
+    }
+
     domainEl.textContent = data.lastCheckedDomain;
 
-    // ── Score + severity tier ─────────────────────────
     const score = data.lastThreatScore || 0;
     scoreEl.textContent = score;
 
-    // Ring: circumference = 175.9, offset = circ * (1 - score/100)
     const offset = 175.9 * (1 - score / 100);
     ringFill.style.strokeDashoffset = offset;
 
@@ -71,7 +72,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const tierLabels = { safe: "SAFE", medium: "WARN", danger: "HIGH" };
 
-    // Apply color class to ring, score number, threat card
     if (tier !== "safe") {
       ringFill.classList.add(tier);
       ringLabel.classList.add(tier);
@@ -86,14 +86,10 @@ document.addEventListener("DOMContentLoaded", () => {
     if (tier === "medium") threatCard.classList.add("medium");
 
     ringLabel.textContent = tierLabels[tier];
-
-    // ── Severity badge ────────────────────────────────
     severityBadge.textContent = tierLabels[tier];
     severityBadge.className = `severity-badge severity-${tier}`;
 
-    // ── Flags ─────────────────────────────────────────
     const flags = (data.lastThreatFlags || []).filter(f => f !== "System Ready");
-
     if (flags.length > 0) {
       flagsList.replaceChildren();
       flags.forEach((text) => {
@@ -107,5 +103,23 @@ document.addEventListener("DOMContentLoaded", () => {
         flagsList.appendChild(item);
       });
     }
+  }
+
+  // Get active tab hostname, then load storage and render
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    let activeHostname = "";
+    try { activeHostname = new URL(tabs[0]?.url || "").hostname; } catch (_) {}
+
+    chrome.storage.local.get(["lastCheckedDomain", "lastThreatScore", "lastThreatFlags"], (data) => {
+      renderPopup(data, activeHostname);
+    });
+
+    // Live refresh: re-render whenever background updates storage
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== "local") return;
+      chrome.storage.local.get(["lastCheckedDomain", "lastThreatScore", "lastThreatFlags"], (data) => {
+        renderPopup(data, activeHostname);
+      });
+    });
   });
 });
