@@ -55,6 +55,17 @@ SUSPICIOUS_TLDS = {
     ".win", ".bid", ".download", ".racing", ".accountant"
 }
 
+SUSPICIOUS_KEYWORDS = [
+    "secure", "login", "verify", "update", "account", "banking",
+    "confirm", "password", "signin", "webscr", "paypal", "ebay",
+    "amazon", "microsoft", "apple"
+]
+
+BRAND_NAMES = [
+    "google", "amazon", "netflix", "paypal", "microsoft",
+    "linkedin", "apple", "facebook", "instagram", "twitter"
+]
+
 class URLPayload(BaseModel):
     url: str
 
@@ -68,19 +79,11 @@ def get_entropy(s: str) -> float:
         freq[c] = freq.get(c, 0) + 1
     return -sum((f / len(s)) * math.log2(f / len(s)) for f in freq.values())
 
-SUSPICIOUS_KEYWORDS = [
-    "secure", "login", "verify", "update", "account", "banking",
-    "confirm", "password", "signin", "webscr", "paypal", "ebay",
-    "amazon", "microsoft", "apple"
-]
-
-BRAND_NAMES = [
-    "google", "amazon", "netflix", "paypal", "microsoft",
-    "linkedin", "apple", "facebook", "instagram", "twitter"
-]
+def strip_www(url: str) -> str:
+    """Remove www. prefix after scheme to match Tranco training format."""
+    return re.sub(r"^(https?://)www\.", r"\1", url)
 
 def extract_features(url: str) -> list:
-    # Normalise exactly as train_model.py does: lowercase, strip scheme for domain parse
     url_lower = str(url).strip().lower()
     domain = re.sub(r"https?://", "", url_lower).split("/")[0].split("?")[0].split("#")[0]
     parts = domain.split(".")
@@ -95,21 +98,21 @@ def extract_features(url: str) -> list:
     #  'digit_count', 'special_char_count', 'url_entropy',
     #  'suspicious_tld', 'keyword_in_url', 'brand_in_subdomain', 'is_ip_address']
     features = [
-        len(url_lower),                                                                         # 0: url_length
-        len(domain),                                                                            # 1: domain_length
-        len(path),                                                                              # 2: path_length
-        subdomain_depth,                                                                        # 3: subdomain_depth
-        url_lower.count("."),                                                                   # 4: dot_count
-        domain.count("-"),                                                                      # 5: hyphen_count — domain only, matches training
-        int("@" in url_lower),                                                                  # 6: at_symbol
-        int("//" in url_lower[7:]),                                                             # 7: double_slash — skip scheme //, matches training
-        sum(c.isdigit() for c in domain),                                                       # 8: digit_count — domain only, matches training
-        len(re.findall(r"[%&=\?\+\#\!\*]", url_lower)),                                        # 9: special_char_count — matches training regex
-        round(get_entropy(url_lower), 4),                                                       # 10: url_entropy — full URL, matches training
-        int(tld in SUSPICIOUS_TLDS),                                                            # 11: suspicious_tld
-        int(any(k in url_lower for k in SUSPICIOUS_KEYWORDS)),                                  # 12: keyword_in_url — full keyword list, matches training
-        int(any(b in domain and b not in sld for b in BRAND_NAMES)),                            # 13: brand_in_subdomain — matches training logic
-        int(bool(re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}(:\d+)?", domain))),                     # 14: is_ip_address — matches training fullmatch
+        len(url_lower),
+        len(domain),
+        len(path),
+        subdomain_depth,
+        url_lower.count("."),
+        domain.count("-"),
+        int("@" in url_lower),
+        int("//" in url_lower[7:]),
+        sum(c.isdigit() for c in domain),
+        len(re.findall(r"[%&=\?\+\#\!\*]", url_lower)),
+        round(get_entropy(url_lower), 4),
+        int(tld in SUSPICIOUS_TLDS),
+        int(any(k in url_lower for k in SUSPICIOUS_KEYWORDS)),
+        int(any(b in domain and b not in sld for b in BRAND_NAMES)),
+        int(bool(re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}(:\d+)?", domain))),
     ]
     return features
 
@@ -148,12 +151,6 @@ def heuristic_layer(url: str, domain: str) -> tuple[int, list[str]]:
     return min(bonus, 40), flags
 
 def domain_age_check(domain: str) -> tuple[int, str | None]:
-    """
-    Returns (score_bonus, flag_string).
-    Domains under 30 days old:  +25 bonus, flagged as high risk.
-    Domains 30-90 days old:     +10 bonus, flagged as moderate risk.
-    Domains over 90 days or lookup failure: 0 bonus, no flag.
-    """
     try:
         parts = domain.replace("www.", "").split(".")
         registrable = ".".join(parts[-2:]) if len(parts) >= 2 else domain
@@ -203,6 +200,10 @@ async def predict(payload: URLPayload):
         raise HTTPException(status_code=400, detail="Unsupported URL scheme")
 
     normalized_url = url if lower_url.startswith(("http://", "https://")) else "http://" + url
+
+    # Strip www. to match Tranco training format — www.google.com → google.com
+    normalized_url = strip_www(normalized_url)
+
     try:
         parsed = urlparse(normalized_url)
         domain = parsed.netloc or parsed.path
