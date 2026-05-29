@@ -1,15 +1,9 @@
 /**
- * PhishShield AI - Robust Manifest V3 Service Worker
- * FIXED: Externalized API URL via config, domain dedup guard
+ * PhishShield AI - Manifest V3 Service Worker
  */
 
-// ✅ FIX 5: API URL lives here — change ONE line when your tunnel/deployment changes
-//    Later we'll move this to a proper config.json, but this is already 10x better
-//    than it being buried inside fetch() logic
 const CONFIG = {
   apiEndpoint: "https://phishshield-ai-guardian-production.up.railway.app/predict",
-  // 👆 Replace this with your live URL. When you deploy properly (Phase 3),
-  //    this becomes your real domain e.g. https://api.phishshield.dev/...
 };
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -21,18 +15,24 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log("[PhishShield AI] Background service engine successfully mounted.");
 });
 
-// ✅ FIX 6: In-memory domain dedup guard
-//    Prevents duplicate concurrent requests for the same domain
-//    (e.g. content.js fires twice quickly before the first response is back)
 const pendingRequests = new Set();
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "EVALUATE_SECURITY_TELEMETRY") {
     const data = message.telemetryData;
-    const tabUrl = sender.tab?.url || data.pageUrl || "";
-    const requestUrl = tabUrl || ("http://" + data.domainName);
 
-    // ✅ FIX 7: Skip if we're already processing this domain
+    // Build a clean scheme+domain URL — no path, no query string.
+    // The model was trained on bare domain URLs so we must match that format.
+    let requestUrl;
+    try {
+      const raw = sender.tab?.url || data.pageUrl || ("http://" + data.domainName);
+      const parsed = new URL(raw);
+      requestUrl = parsed.origin + "/";
+    } catch (_) {
+      requestUrl = "http://" + data.domainName + "/";
+    }
+
+    // Dedup guard — skip if already processing this domain
     if (pendingRequests.has(data.domainName)) {
       sendResponse({ riskScore: 0, triggeredMitigations: ["Scan already in progress"] });
       return true;
@@ -42,7 +42,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     let computedRiskScore = 0;
     let activatedAlertFlags = [];
 
-    // Local heuristic: password field over HTTP is always flagged immediately
+    // Local heuristic: password field over HTTP is an immediate red flag
     if (
       data.hasPasswordInput &&
       sender.tab?.url?.startsWith("http://") &&
@@ -70,8 +70,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           ? backendResult.flags
           : (backendResult.backendFlags || []);
 
-        // Backend score is the authoritative ML+heuristic+WHOIS result.
-        // Local HTTP penalty flags are additive on top, capped at 100.
+        // Backend score is authoritative. Local HTTP penalty is additive, capped at 100.
         computedRiskScore = Math.min(backendScore + computedRiskScore, 100);
         if (backendFlags.length > 0) {
           activatedAlertFlags = [...activatedAlertFlags, ...backendFlags];
@@ -97,7 +96,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ riskScore: computedRiskScore, triggeredMitigations: activatedAlertFlags });
       })
       .finally(() => {
-        // ✅ Always release the domain lock after request completes or fails
         pendingRequests.delete(data.domainName);
       });
 
