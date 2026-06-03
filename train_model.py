@@ -1,15 +1,10 @@
 """
-PhishShield AI - Model Trainer v3
-Pulls up to 50,000 URLs from multiple live sources for better separation.
+PhishShield AI - Model Trainer v4
+Sources: PhishTank + OpenPhish (phishing) | Tranco + Majestic (legit)
+URLhaus removed -- malware URLs skew path_length feature causing false positives.
 
 Usage:
     python train_model.py
-
-Output:
-    phish_model.pkl
-    phish_scaler.pkl
-    phish_features.pkl
-    phish_report.txt
 """
 
 import pandas as pd
@@ -25,14 +20,14 @@ from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import classification_report, confusion_matrix
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (PhishShield-Research/3.0)"}
-TARGET_PER_CLASS = 25000  # 25k phishing + 25k legit = 50k total
+HEADERS = {"User-Agent": "Mozilla/5.0 (PhishShield-Research/4.0)"}
+TARGET_PER_CLASS = 15000
 
 # ── 1. DATA SOURCES ───────────────────────────────────────────────────────────
 
 print("\n[1/5] Loading datasets...")
 
-def fetch_phishtank(limit=20000):
+def fetch_phishtank(limit=15000):
     try:
         print("   Trying PhishTank...")
         r = requests.get("http://data.phishtank.com/data/online-valid.csv", headers=HEADERS, timeout=30)
@@ -47,7 +42,7 @@ def fetch_phishtank(limit=20000):
         print(f"   PhishTank failed: {e}")
     return []
 
-def fetch_openphish(limit=10000):
+def fetch_openphish(limit=15000):
     try:
         print("   Trying OpenPhish...")
         r = requests.get("https://openphish.com/feed.txt", headers=HEADERS, timeout=15)
@@ -59,41 +54,7 @@ def fetch_openphish(limit=10000):
         print(f"   OpenPhish failed: {e}")
     return []
 
-def fetch_urlhaus(limit=10000):
-    try:
-        print("   Trying URLhaus...")
-        r = requests.get("https://urlhaus.abuse.ch/downloads/csv_recent/", headers=HEADERS, timeout=30)
-        r.raise_for_status()
-        lines = [l for l in r.text.splitlines() if not l.startswith("#") and l.strip()]
-        df = pd.read_csv(io.StringIO("\n".join(lines)), on_bad_lines="skip")
-        col = next((c for c in df.columns if "url" in c.lower()), None)
-        if col:
-            urls = df[col].dropna().tolist()[:limit]
-            print(f"   URLhaus: {len(urls)} URLs")
-            return urls
-    except Exception as e:
-        print(f"   URLhaus failed: {e}")
-    return []
-
-def fetch_phishstats(limit=10000):
-    """PhishStats — free CSV, updated hourly."""
-    try:
-        print("   Trying PhishStats...")
-        r = requests.get("https://phishstats.info/phish_score.csv", headers=HEADERS, timeout=30)
-        r.raise_for_status()
-        lines = [l for l in r.text.splitlines() if not l.startswith("#") and l.strip()]
-        df = pd.read_csv(io.StringIO("\n".join(lines)), on_bad_lines="skip", header=None)
-        # PhishStats format: date, score, url, ip
-        if df.shape[1] >= 3:
-            urls = df.iloc[:, 2].dropna().tolist()[:limit]
-            urls = [u for u in urls if str(u).startswith("http")]
-            print(f"   PhishStats: {len(urls)} URLs")
-            return urls
-    except Exception as e:
-        print(f"   PhishStats failed: {e}")
-    return []
-
-def fetch_tranco(limit=25000):
+def fetch_tranco(limit=15000):
     try:
         print("   Trying Tranco top-1M...")
         r = requests.get("https://tranco-list.eu/top-1m.csv.zip", headers=HEADERS, timeout=60)
@@ -109,7 +70,7 @@ def fetch_tranco(limit=25000):
         print(f"   Tranco failed: {e}")
     return []
 
-def fetch_majestic(limit=25000):
+def fetch_majestic(limit=15000):
     try:
         print("   Trying Majestic Million...")
         r = requests.get("https://downloads.majestic.com/majestic_million.csv", headers=HEADERS, timeout=30)
@@ -125,65 +86,32 @@ def fetch_majestic(limit=25000):
         print(f"   Majestic failed: {e}")
     return []
 
-def fetch_cisco_umbrella(limit=25000):
-    """Cisco Umbrella top 1M — highly reliable legit source."""
-    try:
-        print("   Trying Cisco Umbrella...")
-        r = requests.get("https://s3-us-west-1.amazonaws.com/umbrella-static/top-1m.csv.zip", headers=HEADERS, timeout=60)
-        r.raise_for_status()
-        with zipfile.ZipFile(io.BytesIO(r.content)) as z:
-            with z.open(z.namelist()[0]) as f:
-                df = pd.read_csv(f, header=None, names=["rank", "domain"])
-        domains = df["domain"].dropna().tolist()[:limit]
-        urls = [f"https://{d}" for d in domains]
-        print(f"   Cisco Umbrella: {len(urls)} URLs")
-        return urls
-    except Exception as e:
-        print(f"   Cisco Umbrella failed: {e}")
-    return []
-
-# ── Collect phishing URLs ─────────────────────────────────────────────────────
+# Phishing
 phish_urls = []
-phish_urls += fetch_phishtank(20000)
-phish_urls += fetch_openphish(10000)
-phish_urls += fetch_urlhaus(10000)
-phish_urls += fetch_phishstats(10000)
-
-# Deduplicate
+phish_urls += fetch_phishtank(15000)
+phish_urls += fetch_openphish(15000)
 phish_urls = list(dict.fromkeys(phish_urls))
-print(f"\n   Total phishing URLs collected: {len(phish_urls)}")
+print(f"\n   Total phishing URLs: {len(phish_urls)}")
 
-# ── Collect legit URLs ────────────────────────────────────────────────────────
-legit_urls = []
-legit_urls += fetch_tranco(25000)
-if len(legit_urls) < 10000:
-    legit_urls += fetch_majestic(25000)
-if len(legit_urls) < 10000:
-    legit_urls += fetch_cisco_umbrella(25000)
-
+# Legit
+legit_urls = fetch_tranco(15000)
+if len(legit_urls) < 1000:
+    legit_urls += fetch_majestic(15000)
 legit_urls = list(dict.fromkeys(legit_urls))
-print(f"   Total legit URLs collected: {len(legit_urls)}")
+print(f"   Total legit URLs: {len(legit_urls)}")
 
-# ── Guard ─────────────────────────────────────────────────────────────────────
-MIN_SAMPLES = 500
-if len(phish_urls) < MIN_SAMPLES or len(legit_urls) < MIN_SAMPLES:
-    print(f"""
-ERROR: Not enough data.
-  Phishing: {len(phish_urls)}
-  Legit:    {len(legit_urls)}
-Check your internet connection and try again.
-""")
+if len(phish_urls) < 200 or len(legit_urls) < 200:
+    print(f"\nERROR: Not enough data. Phishing: {len(phish_urls)}, Legit: {len(legit_urls)}")
     exit(1)
 
-# Balance
 n = min(len(phish_urls), len(legit_urls), TARGET_PER_CLASS)
 phish_urls = phish_urls[:n]
 legit_urls = legit_urls[:n]
-print(f"\n   Final dataset: {n} phishing + {n} legit = {n*2} total")
+print(f"   Final: {n} phishing + {n} legit = {n*2} total\n")
 
 # ── 2. FEATURE EXTRACTION ─────────────────────────────────────────────────────
 
-print("\n[2/5] Extracting features...")
+print("[2/5] Extracting features...")
 
 SUSPICIOUS_TLDS = {
     ".tk", ".ml", ".ga", ".cf", ".gq", ".xyz", ".top", ".click",
@@ -191,7 +119,7 @@ SUSPICIOUS_TLDS = {
     ".pw", ".cc", ".su", ".work",
 }
 
-# Brand names NOT included here — they're caught by brand_in_subdomain feature
+# No brand names here -- they cause false positives on real brand sites
 SUSPICIOUS_KEYWORDS = [
     "secure", "login", "verify", "update", "account", "banking",
     "confirm", "password", "signin", "webscr",
@@ -250,11 +178,11 @@ print("   Processing legit URLs...")
 df_legit = build_dataframe(legit_urls, label=0)
 
 df = pd.concat([df_phish, df_legit], ignore_index=True).dropna()
-print(f"   Dataset ready: {len(df)} samples, {len(FEATURE_COLS)} features")
+print(f"   Dataset: {len(df)} samples, {len(FEATURE_COLS)} features\n")
 
 # ── 3. TRAIN ──────────────────────────────────────────────────────────────────
 
-print("\n[3/5] Training Random Forest classifier...")
+print("[3/5] Training Random Forest...")
 
 X = df[FEATURE_COLS]
 y = df["label"]
@@ -269,19 +197,19 @@ X_test_s  = scaler.transform(X_test)
 
 model = RandomForestClassifier(
     n_estimators=300,
-    max_depth=25,
-    min_samples_split=4,
+    max_depth=20,
+    min_samples_split=5,
     min_samples_leaf=2,
     class_weight="balanced",
     random_state=42,
     n_jobs=-1,
 )
 model.fit(X_train_s, y_train)
-print("   Training complete.")
+print("   Training complete.\n")
 
 # ── 4. EVALUATE ───────────────────────────────────────────────────────────────
 
-print("\n[4/5] Evaluating model...")
+print("[4/5] Evaluating...")
 
 y_pred    = model.predict(X_test_s)
 report    = classification_report(y_test, y_pred, target_names=["Legitimate", "Phishing"])
@@ -291,32 +219,30 @@ cv_scores = cross_val_score(model, scaler.transform(X), y, cv=5, scoring="f1")
 importances  = pd.Series(model.feature_importances_, index=FEATURE_COLS)
 top_features = importances.sort_values(ascending=False).head(5)
 
-print("\n" + "="*55)
-print("  PHISHSHIELD AI — MODEL EVALUATION REPORT")
+print("="*55)
+print("  PHISHSHIELD AI -- MODEL EVALUATION REPORT")
 print("="*55)
 print(report)
 print(f"  Confusion Matrix:\n{cm}")
-print(f"\n  5-Fold CV F1: {cv_scores.mean():.3f} ± {cv_scores.std():.3f}")
+print(f"\n  5-Fold CV F1: {cv_scores.mean():.3f} +/- {cv_scores.std():.3f}")
 print(f"\n  Top 5 features:\n{top_features.to_string()}")
-print("="*55 + "\n")
+print("="*55)
 
 with open("phish_report.txt", "w") as f:
-    f.write("PhishShield AI — Model Evaluation Report\n")
+    f.write("PhishShield AI -- Model Evaluation Report\n")
     f.write("="*55 + "\n\n")
     f.write(report)
     f.write(f"\nConfusion Matrix:\n{cm}\n")
-    f.write(f"\n5-Fold CV F1: {cv_scores.mean():.3f} ± {cv_scores.std():.3f}\n")
+    f.write(f"\n5-Fold CV F1: {cv_scores.mean():.3f} +/- {cv_scores.std():.3f}\n")
     f.write(f"\nTop features:\n{top_features.to_string()}\n")
-
-print("[4/5] Report saved to phish_report.txt")
 
 # ── 5. SAVE ───────────────────────────────────────────────────────────────────
 
-print("\n[5/5] Saving model artifacts...")
+print("\n[5/5] Saving artifacts...")
 joblib.dump(model,        "phish_model.pkl")
 joblib.dump(scaler,       "phish_scaler.pkl")
 joblib.dump(FEATURE_COLS, "phish_features.pkl")
 print("   phish_model.pkl")
 print("   phish_scaler.pkl")
 print("   phish_features.pkl")
-print("\n✅ Done. Push .pkl files to GitHub to deploy.\n")
+print("\nDone. Run: git add *.pkl && git commit -m retrain && git push\n")
