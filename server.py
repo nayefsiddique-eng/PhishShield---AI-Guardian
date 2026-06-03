@@ -77,7 +77,6 @@ FEATURE_COLS = [
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (PhishShield-Research/2.0)"}
 
-
 def get_entropy(s: str) -> float:
     if not s:
         return 0.0
@@ -86,14 +85,9 @@ def get_entropy(s: str) -> float:
         freq[c] = freq.get(c, 0) + 1
     return -sum((f / len(s)) * math.log2(f / len(s)) for f in freq.values())
 
-
-def strip_www(url: str) -> str:
-    return re.sub(r"^(https?://)www\.", r"\1", url)
-
-
 def extract_features_dict(url: str) -> dict:
     url = str(url).strip().lower()
-    url = strip_www(url)
+    url = re.sub(r"^(https?://)www\.", r"\1", url)
     domain = re.sub(r"https?://", "", url).split("/")[0].split("?")[0].split("#")[0]
     parts = domain.split(".")
     tld = "." + parts[-1] if len(parts) > 1 else ""
@@ -117,108 +111,69 @@ def extract_features_dict(url: str) -> dict:
         "is_ip_address":      int(bool(re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}(:\d+)?", domain))),
     }
 
+def train_model():
+    """Train model fresh on Railway using live data sources."""
+    print("[PhishShield] Training model on Railway...")
 
-def fetch_phishing_urls() -> list:
-    """Try OpenPhish first (real phishing), fallback to PhishTank."""
-    # OpenPhish — real phishing URLs, not malware downloads
+    # Fetch phishing URLs
+    phish_urls = []
     try:
-        print("[PhishShield] Fetching OpenPhish...")
-        r = requests.get("https://openphish.com/feed.txt", headers=HEADERS, timeout=20)
-        r.raise_for_status()
-        urls = [u.strip() for u in r.text.splitlines() if u.strip().startswith("http")]
-        if len(urls) >= 100:
-            print(f"[PhishShield] OpenPhish: {len(urls)} URLs")
-            return urls[:5000]
-    except Exception as e:
-        print(f"[PhishShield] OpenPhish failed: {e}")
-
-    # PhishTank fallback
-    try:
-        print("[PhishShield] Fetching PhishTank...")
-        r = requests.get(
-            "http://data.phishtank.com/data/online-valid.csv",
-            headers=HEADERS, timeout=30
-        )
-        r.raise_for_status()
+        r = requests.get("https://urlhaus.abuse.ch/downloads/csv_recent/", headers=HEADERS, timeout=30)
+        lines = [l for l in r.text.splitlines() if not l.startswith("#") and l.strip()]
         import pandas as pd
-        df = pd.read_csv(io.StringIO(r.text), on_bad_lines="skip")
-        col = next((c for c in df.columns if "url" in c.lower()), None)
-        if col:
-            urls = df[col].dropna().tolist()[:5000]
-            print(f"[PhishShield] PhishTank: {len(urls)} URLs")
-            return urls
+        df = pd.read_csv(io.StringIO("\n".join(lines)), on_bad_lines="skip")
+        df.columns = [str(i) for i in range(len(df.columns))]
+        phish_urls = df["2"].dropna().tolist()[:5000]
+        print(f"[PhishShield] Phishing URLs: {len(phish_urls)}")
     except Exception as e:
-        print(f"[PhishShield] PhishTank failed: {e}")
+        print(f"[PhishShield] URLhaus failed: {e}")
 
-    return []
-
-
-def fetch_legit_urls() -> list:
-    """Fetch legitimate domains from Tranco top-1M."""
+    # Fetch legit URLs
+    legit_urls = []
     try:
-        print("[PhishShield] Fetching Tranco...")
-        r = requests.get(
-            "https://tranco-list.eu/top-1m.csv.zip",
-            headers=HEADERS, timeout=60
-        )
-        r.raise_for_status()
-        with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+        r2 = requests.get("https://tranco-list.eu/top-1m.csv.zip", headers=HEADERS, timeout=60)
+        with zipfile.ZipFile(io.BytesIO(r2.content)) as z:
             with z.open(z.namelist()[0]) as f:
                 import pandas as pd
-                df = pd.read_csv(f, header=None, names=["rank", "domain"])
-        urls = ["https://" + d for d in df["domain"].dropna().tolist()[:5000]]
-        print(f"[PhishShield] Tranco: {len(urls)} URLs")
-        return urls
+                df2 = pd.read_csv(f, header=None, names=["rank", "domain"])
+        legit_urls = ["https://" + d for d in df2["domain"].dropna().tolist()[:5000]]
+        print(f"[PhishShield] Legit URLs: {len(legit_urls)}")
     except Exception as e:
         print(f"[PhishShield] Tranco failed: {e}")
-    return []
-
-
-def train_model():
-    """Train a fresh model on Railway using live phishing + legit data."""
-    print("[PhishShield] Starting model training...")
-    import pandas as pd
-
-    phish_urls = fetch_phishing_urls()
-    legit_urls = fetch_legit_urls()
 
     if len(phish_urls) < 100 or len(legit_urls) < 100:
-        print(f"[PhishShield] Not enough data (phish={len(phish_urls)}, legit={len(legit_urls)})")
+        print("[PhishShield] Not enough data — using fallback pkl files")
         return None, None
 
+    import pandas as pd
     n = min(len(phish_urls), len(legit_urls), 5000)
     rows = []
     for url in phish_urls[:n]:
-        try:
-            rows.append({**extract_features_dict(url), "label": 1})
-        except Exception:
-            pass
+        try: rows.append({**extract_features_dict(url), "label": 1})
+        except: pass
     for url in legit_urls[:n]:
-        try:
-            rows.append({**extract_features_dict(url), "label": 0})
-        except Exception:
-            pass
+        try: rows.append({**extract_features_dict(url), "label": 0})
+        except: pass
 
     df = pd.DataFrame(rows).dropna()
     print(f"[PhishShield] Dataset: {len(df)} samples")
 
     X = df[FEATURE_COLS]
     y = df["label"]
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
     scaler = StandardScaler()
     X_train_s = scaler.fit_transform(X_train)
-    X_test_s = scaler.transform(X_test)
 
     model = RandomForestClassifier(
         n_estimators=200, max_depth=20, min_samples_split=5,
         class_weight="balanced", random_state=42, n_jobs=-1
     )
     model.fit(X_train_s, y_train)
+
+    X_test_s = scaler.transform(X_test)
     acc = model.score(X_test_s, y_test)
-    print(f"[PhishShield] Accuracy: {acc:.3f}")
+    print(f"[PhishShield] Model accuracy: {acc:.3f}")
 
     joblib.dump(model,        os.path.join(BASE_DIR, "phish_model.pkl"))
     joblib.dump(scaler,       os.path.join(BASE_DIR, "phish_scaler.pkl"))
@@ -226,49 +181,42 @@ def train_model():
     print("[PhishShield] Model saved.")
     return model, scaler
 
-
-def validate_model(model, scaler) -> int:
-    """Returns google.com score — should be < 20 for a healthy model."""
-    test = extract_features_dict("https://google.com/")
-    test_vals = [test[f] for f in FEATURE_COLS]
-    scaled = scaler.transform([test_vals])
-    score = round(float(model.predict_proba(scaled)[0][1]) * 100)
-    print(f"[PhishShield] Validation — google.com: {score}%")
-    return score
-
-
-# ── Load or train model on startup ────────────────────────────────────────────
+# ── Load or train model ────────────────────────────────────────────────────────
 try:
     model = joblib.load(os.path.join(BASE_DIR, "phish_model.pkl"))
     scaler = joblib.load(os.path.join(BASE_DIR, "phish_scaler.pkl"))
     feature_names = joblib.load(os.path.join(BASE_DIR, "phish_features.pkl"))
 
-    score = validate_model(model, scaler)
-    if score > 20:
-        print("[PhishShield] Model failed validation — retraining with OpenPhish data...")
+    # Validate model works correctly on a known safe URL
+    test_features = extract_features_dict("https://google.com/")
+    test_vals = [test_features[f] for f in FEATURE_COLS]
+    test_scaled = scaler.transform([test_vals])
+    test_score = round(float(model.predict_proba(test_scaled)[0][1]) * 100)
+    print(f"[PhishShield] Model validation — google.com score: {test_score}%")
+
+    if test_score > 20:
+        print("[PhishShield] Model failed validation — retraining...")
         model, scaler = train_model()
         if model is None:
-            raise RuntimeError("Training failed")
-        validate_model(model, scaler)
+            raise RuntimeError("Retraining failed")
     else:
-        print("[PhishShield] Model OK.")
+        print("[PhishShield] Model validated successfully.")
 
 except Exception as e:
-    print(f"[PhishShield] Startup error: {e} — training fresh model...")
+    print(f"[PhishShield] Model load failed: {e} — training fresh...")
     model, scaler = train_model()
-
 
 class URLPayload(BaseModel):
     url: str
 
-
 URL_MAX_LENGTH = 2048
 
+def strip_www(url: str) -> str:
+    return re.sub(r"^(https?://)www\.", r"\1", url)
 
 def extract_features(url: str) -> list:
     d = extract_features_dict(url)
     return [d[f] for f in FEATURE_COLS]
-
 
 def heuristic_layer(url: str, domain: str) -> tuple[int, list[str]]:
     bonus = 0
@@ -304,7 +252,6 @@ def heuristic_layer(url: str, domain: str) -> tuple[int, list[str]]:
 
     return min(bonus, 40), flags
 
-
 def domain_age_check(domain: str) -> tuple[int, str | None]:
     try:
         parts = domain.replace("www.", "").split(".")
@@ -327,16 +274,13 @@ def domain_age_check(domain: str) -> tuple[int, str | None]:
     except Exception:
         return 0, None
 
-
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
-
 @app.get("/")
 def root():
     return {"service": "PhishShield AI", "version": "1.0.0", "status": "running"}
-
 
 @app.post("/predict")
 async def predict(payload: URLPayload):
