@@ -3,22 +3,22 @@ PhishShield AI — Model Evaluation Report
 
               precision    recall  f1-score   support
 
-  Legitimate       0.99      0.99      0.99      1000
-    Phishing       0.99      0.99      0.99      1000
+  Legitimate       1.00      1.00      1.00      2060
+    Phishing       1.00      1.00      1.00      2060
 
-    accuracy                           0.99      2000
-   macro avg       0.99      0.99      0.99      2000
-weighted avg       0.99      0.99      0.99      2000
+    accuracy                           1.00      4120
+   macro avg       1.00      1.00      1.00      4120
+weighted avg       1.00      1.00      1.00      4120
 
 Confusion Matrix:
-[[995   5]
- [ 11 989]]
+[[2060    0]
+ [   6 2054]]
 
-5-Fold CV F1: 0.987 ± 0.010
+5-Fold CV F1: 0.994 ± 0.013
 
 Top features:
-path_length        0.332463
-url_length         0.218804
-dot_count          0.138136
-subdomain_depth    0.103536
-domain_length      0.082044
+path_length        0.266828
+url_length         0.241387
+dot_count          0.143968
+subdomain_depth    0.139983
+url_entropy        0.117561
