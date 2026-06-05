@@ -1,13 +1,9 @@
-/**
- * PhishShield AI - Real-Time Dynamic Telemetry Observer Engine
- * FIXED: Debounced MutationObserver, per-domain result caching
- */
 (function initializeDynamicScanner() {
   console.log("[PhishShield AI] Initializing proactive telemetry system...");
 
   const scanCache = {};
   const CACHE_TTL_MS = 30000;
-  const BANNER_THRESHOLD = 70; // Only show banner for DANGER (>=70), not MEDIUM
+  const BANNER_THRESHOLD = 70; // Only show banner for DANGER (>=70)
 
   function deployInterceptionBanner(score, mitigations) {
     if (document.getElementById("phishshield-alert-banner")) return;
@@ -100,4 +96,5 @@
       subtree: true
     });
   }
+
 })();

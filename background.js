@@ -21,13 +21,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "EVALUATE_SECURITY_TELEMETRY") {
     const data = message.telemetryData;
 
-    // Build a clean scheme+domain URL — no path, no query string.
-    // The model was trained on bare domain URLs so we must match that format.
+    // Send full URL to backend so heuristics can analyze path + keywords.
+    // server.py handles www stripping and ML feature extraction internally.
     let requestUrl;
     try {
-      const raw = sender.tab?.url || data.pageUrl || ("http://" + data.domainName);
-      const parsed = new URL(raw);
-      requestUrl = parsed.origin + "/";
+      requestUrl = sender.tab?.url || data.pageUrl || ("http://" + data.domainName);
     } catch (_) {
       requestUrl = "http://" + data.domainName + "/";
     }
