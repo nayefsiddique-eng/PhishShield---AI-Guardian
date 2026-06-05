@@ -21,13 +21,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "EVALUATE_SECURITY_TELEMETRY") {
     const data = message.telemetryData;
 
-    // Build a clean scheme+domain URL — no path, no query string.
-    // The model was trained on bare domain URLs so we must match that format.
+    // Send full URL to backend so heuristics can analyze path + keywords.
+    // server.py handles www stripping and ML feature extraction internally.
     let requestUrl;
     try {
-      const raw = sender.tab?.url || data.pageUrl || ("http://" + data.domainName);
-      const parsed = new URL(raw);
-      requestUrl = parsed.origin + "/";
+      requestUrl = sender.tab?.url || data.pageUrl || ("http://" + data.domainName);
     } catch (_) {
       requestUrl = "http://" + data.domainName + "/";
     }
@@ -72,9 +70,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         // Backend score is authoritative. Local HTTP penalty is additive, capped at 100.
         computedRiskScore = Math.min(backendScore + computedRiskScore, 100);
-        if (backendFlags.length > 0) {
-          activatedAlertFlags = [...activatedAlertFlags, ...backendFlags];
-        }
+        activatedAlertFlags = [...activatedAlertFlags, ...backendFlags];
+        if (backendResult.status === "SAFE" || backendResult.whitelist === true) { computedRiskScore = 0; activatedAlertFlags = []; }
+        console.log("[PhishShield]", data.domainName, "| flags:", activatedAlertFlags);
 
         chrome.storage.local.set({
           lastCheckedDomain: data.domainName,

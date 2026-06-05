@@ -87,14 +87,15 @@ DEFAULT_TRUSTED = {
     "dropbox.com", "github.com", "gitlab.com",
     "netflix.com", "spotify.com",
     "cloudflare.com", "wikipedia.org",
-    "chatgpt.com", "openai.com", "anthropic.com",
+    "chatgpt.com", "openai.com", "anthropic.com", "claude.ai",
     "railway.app", "vercel.app", "netlify.app",
 }
 
-# Load whitelist from pkl if available, otherwise use default
+# Load whitelist from pkl if available, always merge with DEFAULT_TRUSTED
 try:
     TRUSTED_DOMAINS = joblib.load(os.path.join(BASE_DIR, "phish_trusted.pkl"))
-    print(f"[PhishShield] Loaded whitelist: {len(TRUSTED_DOMAINS)} domains")
+    TRUSTED_DOMAINS.update(DEFAULT_TRUSTED)  # always apply latest defaults
+    print(f"[PhishShield] Loaded+merged whitelist: {len(TRUSTED_DOMAINS)} domains")
 except Exception:
     TRUSTED_DOMAINS = DEFAULT_TRUSTED
     print(f"[PhishShield] Using default whitelist: {len(TRUSTED_DOMAINS)} domains")
