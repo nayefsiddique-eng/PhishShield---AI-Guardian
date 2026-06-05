@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PhishShield AI: Consumer Fraud Guardian",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Enterprise-grade real-time phishing and e-commerce fraud mitigation engine.",
   "permissions": [
     "activeTab",
@@ -13,7 +13,8 @@
     "https://phishshield-ai-guardian-production.up.railway.app/*",
     "http://127.0.0.1/*",
     "http://localhost/*",
-    "http://*/*"
+    "http://*/*",
+    "https://*/*"
   ],
   "background": {
     "service_worker": "background.js"

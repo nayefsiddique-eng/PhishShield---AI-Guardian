@@ -87,23 +87,41 @@ DEFAULT_TRUSTED = {
     "dropbox.com", "github.com", "gitlab.com",
     "netflix.com", "spotify.com",
     "cloudflare.com", "wikipedia.org",
-    "chatgpt.com", "openai.com", "anthropic.com",
+    "chatgpt.com", "openai.com", "anthropic.com", "claude.ai",
     "railway.app", "vercel.app", "netlify.app",
 }
 
-# Load whitelist from pkl if available, otherwise use default
+# Load whitelist from pkl if available, always merge with DEFAULT_TRUSTED
 try:
     TRUSTED_DOMAINS = joblib.load(os.path.join(BASE_DIR, "phish_trusted.pkl"))
-    print(f"[PhishShield] Loaded whitelist: {len(TRUSTED_DOMAINS)} domains")
+    TRUSTED_DOMAINS.update(DEFAULT_TRUSTED)  # always apply latest defaults
+    print(f"[PhishShield] Loaded+merged whitelist: {len(TRUSTED_DOMAINS)} domains")
 except Exception:
     TRUSTED_DOMAINS = DEFAULT_TRUSTED
     print(f"[PhishShield] Using default whitelist: {len(TRUSTED_DOMAINS)} domains")
 
 
+
+# TLD suffixes that are inherently institutional/safe — any domain ending in
+# these is treated as trusted without needing an explicit whitelist entry.
+SAFE_TLD_SUFFIXES = {
+    ".gov", ".gov.in", ".gov.uk", ".gov.au", ".gov.us",
+    ".edu", ".edu.in", ".ac.in", ".ac.uk", ".ac.nz",
+    ".mil",
+    ".nic.in",
+}
+
 def is_trusted(url: str) -> bool:
-    """Check if URL domain matches any trusted domain or its parent."""
+    """Return True if domain is whitelisted OR ends with an institutional TLD."""
     url = str(url).strip().lower()
     domain = re.sub(r"https?://", "", url).split("/")[0].split(":")[0]
+
+    # Institutional TLD check (e.g. anything.gov.in, anything.ac.uk)
+    for suffix in SAFE_TLD_SUFFIXES:
+        if domain.endswith(suffix):
+            return True
+
+    # Whitelist: check domain and every parent level
     parts = domain.split(".")
     for i in range(len(parts) - 1):
         candidate = ".".join(parts[i:])
@@ -284,36 +302,85 @@ URL_MAX_LENGTH = 2048
 def heuristic_layer(url: str, domain: str) -> tuple[int, list[str]]:
     bonus = 0
     flags = []
+    url_lower = url.lower()
     domain = domain.lower()
-    domain_clean = domain.replace("www.", "").split(".")[0]
-    parsed_tld = "." + domain.split(".")[-1] if "." in domain else ""
+    domain_parts = domain.split(".")
+    domain_clean = re.sub(r"^www\.", "", domain).split(".")[0]
+    sld = domain_parts[-2] if len(domain_parts) >= 2 else domain_clean
+    parsed_tld = "." + domain_parts[-1] if "." in domain else ""
 
+    # 1. Typosquat
     for brand in PROTECTED_BRANDS:
         dist = Levenshtein.distance(domain_clean, brand)
         if 1 <= dist <= 2:
             bonus += 30
-            flags.append(f"Typosquatting detected — close match to {brand.upper()}")
+            flags.append(f"Typosquatting: '{domain_clean}' looks like '{brand}' (edit distance {dist})")
             break
 
+    # 2. Suspicious TLD
     if parsed_tld in SUSPICIOUS_TLDS:
         bonus += 15
-        flags.append(f"Suspicious TLD: {parsed_tld}")
+        flags.append(f"High-risk free TLD: '{parsed_tld}' — frequently abused for phishing")
 
-    for kw in SUSPICIOUS_KEYWORDS:
-        if kw in url.lower():
-            bonus += 10
-            flags.append(f"Suspicious keyword: {kw}")
-            break
+    # 3. ALL matching suspicious keywords (no break — report all)
+    matched_kws = [kw for kw in SUSPICIOUS_KEYWORDS if kw in url_lower]
+    if matched_kws:
+        bonus += min(len(matched_kws) * 5, 15)
+        flags.append(f"Phishing keyword(s) in URL: {', '.join(matched_kws)}")
 
-    if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", domain.replace("www.", "")):
+    # 4. IP address as domain
+    if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", re.sub(r"^www\.", "", domain)):
         bonus += 20
-        flags.append("IP address used as domain")
+        flags.append("IP address used as domain — legitimate sites use domain names")
 
+    # 5. Excessive hyphens
     if domain.count("-") >= 3:
         bonus += 10
-        flags.append("Excessive hyphens in domain")
+        flags.append(f"Excessive hyphens in domain ({domain.count('-')}) — common obfuscation")
 
-    return min(bonus, 40), flags
+    # 6. Brand name in subdomain (not the actual brand domain)
+    for brand in BRAND_NAMES:
+        if brand in domain and brand != sld:
+            bonus += 20
+            flags.append(f"Brand '{brand}' in subdomain — impersonation pattern")
+            break
+
+    # 7. @ in URL
+    if "@" in url:
+        bonus += 25
+        flags.append("'@' in URL — browser ignores everything before it (redirect trick)")
+
+    return min(bonus, 45), flags
+
+
+def ml_flags(features_dict: dict, ml_score: int) -> list[str]:
+    """Human-readable explanations for why the ML model fired."""
+    flags = []
+    if ml_score < 40:
+        return flags
+    if features_dict.get("is_ip_address"):
+        flags.append("ML: IP address domain detected")
+    if features_dict.get("brand_in_subdomain"):
+        flags.append("ML: Known brand found in subdomain (not in registered domain)")
+    if features_dict.get("suspicious_tld"):
+        flags.append("ML: TLD associated with phishing campaigns")
+    if features_dict.get("keyword_in_url"):
+        flags.append("ML: URL contains terms common in credential-phishing pages")
+    if features_dict.get("subdomain_depth", 0) >= 3:
+        flags.append(f"ML: Deep subdomain nesting (depth {features_dict['subdomain_depth']})")
+    if features_dict.get("url_length", 0) > 100:
+        flags.append(f"ML: Abnormally long URL ({features_dict['url_length']} chars)")
+    if features_dict.get("hyphen_count", 0) >= 3:
+        flags.append(f"ML: Many hyphens in domain ({features_dict['hyphen_count']})")
+    if features_dict.get("at_symbol"):
+        flags.append("ML: '@' symbol present in URL")
+    if features_dict.get("digit_count", 0) >= 5:
+        flags.append(f"ML: High digit count in domain ({features_dict['digit_count']})")
+    if features_dict.get("url_entropy", 0) > 4.2:
+        flags.append(f"ML: High URL randomness/entropy ({features_dict['url_entropy']:.2f})")
+    if not flags and ml_score >= 60:
+        flags.append(f"ML: Combination of URL features matches phishing patterns (score {ml_score}%)")
+    return flags
 
 
 @app.get("/health")
@@ -366,18 +433,16 @@ async def predict(payload: URLPayload):
         }
 
     # ── ML LAYER ──────────────────────────────────────────────────────────────
-    features = extract_features(normalized_url)
-    features_scaled = scaler.transform([features])
+    features_dict = extract_features_dict(normalized_url)
+    features_list = [features_dict[f] for f in FEATURE_COLS]
+    features_scaled = scaler.transform([features_list])
     ml_prob = float(model.predict_proba(features_scaled)[0][1])
     ml_score = round(ml_prob * 100)
 
     # ── HEURISTIC LAYER ───────────────────────────────────────────────────────
-    heuristic_bonus, flags = heuristic_layer(normalized_url, domain)
+    heuristic_bonus, h_flags = heuristic_layer(normalized_url, domain)
 
-    # WHOIS disabled for latency
-    age_bonus = 0
-
-    final_score = min(ml_score + heuristic_bonus + age_bonus, 100)
+    final_score = min(ml_score + heuristic_bonus, 100)
 
     if final_score >= 70:
         status = "DANGER"
@@ -386,12 +451,21 @@ async def predict(payload: URLPayload):
     else:
         status = "SAFE"
 
+    # Combine heuristic + ML-derived flags; suppress all flags on clean SAFE
+    if status == "SAFE":
+        all_flags = []
+    else:
+        all_flags = h_flags + ml_flags(features_dict, ml_score)
+        # Deduplicate while preserving order
+        seen = set()
+        all_flags = [f for f in all_flags if not (f in seen or seen.add(f))]
+
     return {
         "status": status,
         "score": final_score,
         "ml_score": ml_score,
         "heuristic_bonus": heuristic_bonus,
-        "age_bonus": age_bonus,
-        "flags": flags,
-        "domain": domain
+        "flags": all_flags,
+        "domain": domain,
+        "whitelist": False,
     }

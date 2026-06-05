@@ -37,7 +37,7 @@ TRUSTED_DOMAINS = {
     "dropbox.com", "github.com", "gitlab.com",
     "netflix.com", "spotify.com",
     "cloudflare.com", "wikipedia.org", "archive.org",
-    "chatgpt.com", "openai.com", "anthropic.com",
+    "chatgpt.com", "openai.com", "anthropic.com", "claude.ai", "console.anthropic.com",
     "railway.app", "vercel.app", "netlify.app",
 }
 

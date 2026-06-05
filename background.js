@@ -70,9 +70,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         // Backend score is authoritative. Local HTTP penalty is additive, capped at 100.
         computedRiskScore = Math.min(backendScore + computedRiskScore, 100);
-        if (backendFlags.length > 0) {
-          activatedAlertFlags = [...activatedAlertFlags, ...backendFlags];
-        }
+        activatedAlertFlags = [...activatedAlertFlags, ...backendFlags];
+        if (backendResult.status === "SAFE" || backendResult.whitelist === true) { computedRiskScore = 0; activatedAlertFlags = []; }
+        console.log("[PhishShield]", data.domainName, "| flags:", activatedAlertFlags);
 
         chrome.storage.local.set({
           lastCheckedDomain: data.domainName,
